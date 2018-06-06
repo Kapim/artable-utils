@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 
 import rospy
-from art_msgs.msg import Program, ProgramItem as Pi
+from art_msgs.msg import Program
 from geometry_msgs.msg import Pose, Polygon
+from art_utils import InstructionsHelper
 
 
 class ProgramHelper(object):
@@ -14,18 +15,12 @@ class ProgramHelper(object):
 
     """
 
-    ITEMS_USING_OBJECT = frozenset([Pi.PICK_FROM_POLYGON, Pi.PICK_FROM_FEEDER, Pi.PICK_OBJECT_ID, Pi.PLACE_TO_POSE,
-                                    Pi.PLACE_TO_GRID, Pi.DRILL_POINTS])
-    ITEMS_USING_POSE = frozenset([Pi.PICK_FROM_FEEDER, Pi.PLACE_TO_POSE, Pi.DRILL_POINTS, Pi.PLACE_TO_GRID,
-                                  Pi.VISUAL_INSPECTION])
-    ITEMS_USING_POLYGON = frozenset([Pi.PICK_FROM_POLYGON, Pi.DRILL_POINTS, Pi.PLACE_TO_GRID])
-    PICK_ITEMS = frozenset([Pi.PICK_FROM_POLYGON, Pi.PICK_FROM_FEEDER, Pi.PICK_OBJECT_ID])
-    PLACE_ITEMS = frozenset([Pi.PLACE_TO_POSE, Pi.PLACE_TO_GRID])
-
     def __init__(self):
 
         self._cache = {}
         self._prog = None
+
+        self.ih = InstructionsHelper()
 
     def load(self, prog, template=False):
 
@@ -69,6 +64,11 @@ class ProgramHelper(object):
             for item_idx in range(0, len(block.items)):
 
                 item = block.items[item_idx]
+
+                if item.type not in self.ih.known_instructions():
+
+                    rospy.logerr("Unknown instruction: " + item.type)
+                    return False
 
                 if item.id in cache[block.id]["items"]:
 
@@ -130,7 +130,7 @@ class ProgramHelper(object):
                         return False
 
                 # at least one 'object' mandatory for following types
-                if item.type in self.ITEMS_USING_OBJECT:
+                if item.type in self.ih.properties.using_object:
 
                     res = self.get_object(k, kk)
 
@@ -139,7 +139,7 @@ class ProgramHelper(object):
                         return False
 
                 # at least one 'pose' mandatory for following types
-                if item.type in self.ITEMS_USING_POSE:
+                if item.type in self.ih.properties.using_pose:
 
                     res = self.get_pose(k, kk)
 
@@ -148,7 +148,7 @@ class ProgramHelper(object):
                         return False
 
                 # at least one 'polygon' mandatory for following types
-                if item.type in self.ITEMS_USING_POLYGON:
+                if item.type in self.ih.properties.using_polygon:
 
                     res = self.get_polygon(k, kk)
 
@@ -157,7 +157,7 @@ class ProgramHelper(object):
                         return False
 
                 # check if PLACE_* instruction has correct ref_id(s) - should be set and point to PICK_*
-                if item.type in self.PLACE_ITEMS or item.type == Pi.VISUAL_INSPECTION:
+                if item.type in self.ih.properties.place | self.ih.properties.ref_to_pick:
 
                     if len(item.ref_id) == 0:
 
@@ -168,7 +168,7 @@ class ProgramHelper(object):
 
                         ref_msg = self.get_item_msg(k, ref_id)
 
-                        if ref_msg.type not in self.PICK_ITEMS:
+                        if ref_msg.type not in self.ih.properties.pick:
 
                             rospy.logerr("Block id: " + str(k) + ", item id: " + str(kk) +
                                          " has ref_id which is not PICK_*!")
@@ -286,28 +286,22 @@ class ProgramHelper(object):
 
     def item_requires_learning(self, block_id, item_id):
 
-        return self.get_item_type(block_id, item_id) in [Pi.PICK_FROM_POLYGON,
-                                                         Pi.PICK_FROM_FEEDER,
-                                                         Pi.PICK_OBJECT_ID,
-                                                         Pi.PLACE_TO_POSE,
-                                                         Pi.PLACE_TO_GRID,
-                                                         Pi.DRILL_POINTS,
-                                                         Pi.VISUAL_INSPECTION]
+        return self.ih.requires_learning(self.get_item_type(block_id, item_id))
 
     def _check_for_pose(self, msg):
 
-        if msg.type not in self.ITEMS_USING_POSE:
+        if msg.type not in self.ih.properties.using_pose:
             raise ValueError("Instruction type " + str(msg.type) + " does not use 'object'.")
 
     def _check_for_object(self, msg):
 
-        if msg.type not in self.ITEMS_USING_OBJECT:
+        if msg.type not in self.ih.properties.using_object:
 
             raise ValueError("Instruction type " + str(msg.type) + " does not use 'object'.")
 
     def _check_for_polygon(self, msg):
 
-        if msg.type not in self.ITEMS_USING_POLYGON:
+        if msg.type not in self.ih.properties.using_polygon:
 
             raise ValueError("Instruction type " + str(msg.type) + " does not use 'polygon'.")
 
@@ -455,9 +449,9 @@ class ProgramHelper(object):
 
         msg = self.get_item_msg(block_id, item_id)
 
-        arr = ((self.ITEMS_USING_POLYGON, self.is_polygon_set),
-               (self.ITEMS_USING_POSE, self.is_pose_set),
-               (self.ITEMS_USING_OBJECT, self.is_object_set))
+        arr = ((self.ih.properties.using_polygon, self.is_polygon_set),
+               (self.ih.properties.using_pose, self.is_pose_set),
+               (self.ih.properties.using_object, self.is_object_set))
 
         for ar in arr:
 
