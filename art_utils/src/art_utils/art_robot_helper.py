@@ -21,8 +21,6 @@ class ArtRobotHelper(object):
             raise RobotParametersNotOnParameterServer
 
         self.robot_type = rospy.get_param(self.robot_ns + "/robot_id", "")
-        if self.robot_type not in ["pr2", "dobot", "aubo", "empty"]:
-            raise UnknownRobot
         for arm_id, parameters in self.robot_parameters.get("arms", []).iteritems():
             self.arms.append(ArtRobotArmHelper(robot_ns=robot_ns, arm_id=arm_id, parameters=parameters))
 
